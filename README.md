@@ -121,6 +121,7 @@ Store DataPrime queries in `.dp` files. See `examples/` for templates:
 - `examples/simple_count.dp` — basic log count by subsystem
 - `examples/fee_lookup_by_country.dp` — join-based fee lookup aggregation
 - `examples/error_code_by_api.dp` — error code grouping with agent ID extraction
+- `examples/api_lookup_join.dp` — generic API lookup with guid correlation and country filter
 
 Replace `<SUBSYSTEM>`, `<HOST>`, `<COUNTRY>`, etc. with your actual values.
 
