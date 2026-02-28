@@ -191,8 +191,18 @@ function runQuery() {
 </html>"""
 
 
+REGION_LABELS = {
+    "us2": "us2 | cx498",
+    "cx498": None,  # hide duplicate
+}
+
 def build_html():
-    opts = ''.join(f'<option value="{r}">{r}</option>' for r in CORALOGIX_ENDPOINTS)
+    opts = ''
+    for r in CORALOGIX_ENDPOINTS:
+        label = REGION_LABELS.get(r, r)
+        if label is None:
+            continue
+        opts += f'<option value="{r}">{label}</option>'
     return HTML.replace('REGION_OPTIONS', opts)
 
 
