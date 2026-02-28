@@ -4,6 +4,8 @@ Chunked [DataPrime](https://coralogix.com/docs/dataprime/) queries for Coralogix
 
 Coralogix enforces scan limits on DataPrime queries that touch large volumes of data. This tool splits your query into time-based chunks, runs them in parallel, and merges the results. If a chunk hits the scan limit, it automatically halves the window and retries until the data fits.
 
+![Web UI](assets/web-ui.png)
+
 ## Features
 
 - **Automatic scan-limit bypass** — detects `bytesScannedLimitWarning` and splits the failing chunk into smaller windows
