@@ -1,0 +1,17 @@
+source logs
+| filter $m.severity >= ERROR
+| extract $d.body:string into $d using regexp(e=/user_id=(?<user_id>[^\s,]+)/)
+| filter $d.user_id != null
+| groupby $d.user_id aggregate count() as ErrorCount
+| join (
+    source logs
+    | filter $d.body ~ 'login successful'
+    | extract $d.body:string into $d using regexp(e=/user_id=(?<user_id>[^\s,]+)/)
+    | filter $d.user_id != null
+    | groupby $d.user_id aggregate count() as LoginCount
+  )
+  on left => $d.user_id == right => $d.user_id
+  into Logins
+| filter Logins.LoginCount != null
+| orderby ErrorCount desc
+| limit 50

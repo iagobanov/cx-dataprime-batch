@@ -1,0 +1,9 @@
+source logs
+| filter $l.subsystemname == 'nginx'
+| filter $d.body ~ 'GET' || $d.body ~ 'POST'
+| extract $d.body:string into $d using regexp(e=/(?<method>GET|POST|PUT|DELETE)\s+(?<path>[^\s]+)\s+HTTP/)
+| filter $d.method != null
+| groupby $d.method, $d.path
+  aggregate count() as RequestCount
+| orderby RequestCount desc
+| limit 20

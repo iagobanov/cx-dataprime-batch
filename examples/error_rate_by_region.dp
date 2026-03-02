@@ -1,0 +1,6 @@
+source logs
+| filter $d.status_code >= 500
+| groupby $d.cloud_region
+  aggregate count() as ErrorCount,
+            avg($d.response_time) as AvgResponseMs
+| orderby ErrorCount desc

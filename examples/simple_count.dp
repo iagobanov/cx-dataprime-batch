@@ -1,3 +1,4 @@
 source logs
-| filter $l.subsystemname == '<SUBSYSTEM>'
-| aggregate count() as Count
+| filter $l.applicationname == 'production'
+| filter $m.severity >= ERROR
+| aggregate count() as ErrorCount
