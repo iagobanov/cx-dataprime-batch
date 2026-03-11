@@ -8,6 +8,7 @@ Supports parallel chunk execution for faster queries.
 """
 
 import click
+import re
 import requests
 import json
 import csv
@@ -95,7 +96,8 @@ def _run_query_once(base_url: str, api_key: str, query: str, start: datetime, en
         resp.raise_for_status()
     except requests.exceptions.HTTPError as e:
         body = getattr(e.response, "text", str(e))
-        return {"rows": [], "warnings": [], "error": str(e), "scan_limit": is_scan_limit_error(body), "retryable": False}
+        err_msg = f"{e} | {body[:300]}" if body else str(e)
+        return {"rows": [], "warnings": [], "error": err_msg, "scan_limit": is_scan_limit_error(body), "retryable": False}
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
         return {"rows": [], "warnings": [], "error": str(e), "scan_limit": False, "retryable": True}
     except requests.exceptions.RequestException as e:
@@ -157,6 +159,14 @@ def run_query(base_url: str, api_key: str, query: str, start: datetime, end: dat
     return result
 
 
+def extract_aggregate_fields(query: str) -> set:
+    """Extract field names defined by aggregate functions in the query.
+    e.g. 'aggregate count() as Count, sum(x) as Total' -> {'Count', 'Total'}
+    """
+    pattern = r'\b(?:count|sum|avg|min|max|countif|sumif|avgif|percentile|stddev|variance)\s*\([^)]*\)\s+as\s+(\w+)'
+    return set(re.findall(pattern, query, re.IGNORECASE))
+
+
 def detect_result_type(rows: list) -> str:
     """
     Detect result shape:
@@ -189,12 +199,16 @@ def detect_result_type(rows: list) -> str:
     return "raw"
 
 
-def merge_results(all_rows: list, result_type: str) -> list:
+def merge_results(all_rows: list, result_type: str, aggregate_fields: set = None) -> list:
     """
     Merge rows across chunks:
     - count:   SUM all numeric fields across chunks -> one final row
-    - grouped: group by string keys, SUM numerics
+    - grouped: group by non-aggregate keys, SUM only aggregate fields
     - raw:     concatenate all rows as-is
+
+    aggregate_fields: set of column names that are actual aggregates (from query parsing).
+                      Only these get summed. All other columns are group keys,
+                      even if they contain numeric values (e.g. AgentID).
     """
     if not all_rows:
         return []
@@ -218,12 +232,20 @@ def merge_results(all_rows: list, result_type: str) -> list:
         first = all_rows[0]
         numeric_keys = []
         group_keys = []
-        for k, v in first.items():
-            try:
-                float(v)
-                numeric_keys.append(k)
-            except (TypeError, ValueError):
-                group_keys.append(k)
+
+        if aggregate_fields:
+            for k in first.keys():
+                if k in aggregate_fields:
+                    numeric_keys.append(k)
+                else:
+                    group_keys.append(k)
+        else:
+            for k, v in first.items():
+                try:
+                    float(v)
+                    numeric_keys.append(k)
+                except (TypeError, ValueError):
+                    group_keys.append(k)
 
         merged = {}
         for row in all_rows:
@@ -488,8 +510,9 @@ def main(query, query_file, start, end, chunk_size, min_chunk_size, api_key, reg
 
     # Merge across chunks
     rt = result_type or detect_result_type(all_rows)
-    console.print(f"\n[dim]Merging {len(all_rows)} raw rows (type=[bold]{rt}[/bold])...[/dim]")
-    final_rows = merge_results(all_rows, rt)
+    agg_fields = extract_aggregate_fields(dp_query)
+    console.print(f"\n[dim]Merging {len(all_rows)} raw rows (type=[bold]{rt}[/bold], aggregates={agg_fields or 'auto'})...[/dim]")
+    final_rows = merge_results(all_rows, rt, aggregate_fields=agg_fields or None)
 
     # Print totals
     if rt == "count":

@@ -24,6 +24,7 @@ from dataprime_chunk import (
     merge_results,
     generate_chunks,
     format_duration,
+    extract_aggregate_fields,
 )
 
 app = Flask(__name__)
@@ -54,6 +55,9 @@ HTML = """<!DOCTYPE html>
     font-size: 0.9rem; cursor: pointer; font-weight: 600; width: 100%; margin-top: 1rem; }
   button:hover { background: #2ea043; }
   button:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+  .btn-csv { background: #1f6feb; margin-top: 0.7rem; display: none; font-size: 0.85rem; width: auto; }
+  .btn-csv:hover { background: #388bfd; }
+  .btn-csv.visible { display: inline-block; }
   .log-box { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 1rem;
     margin-top: 1.5rem; max-height: 400px; overflow-y: auto; font-family: 'SF Mono', monospace;
     font-size: 0.78rem; line-height: 1.6; white-space: pre-wrap; display: none; }
@@ -112,6 +116,7 @@ HTML = """<!DOCTYPE html>
   <div id="resultbox" class="result-box">
     <h3 id="result-title">Results</h3>
     <div id="result-table"></div>
+    <button id="csv-btn" class="btn-csv" onclick="downloadCSV()">Download CSV</button>
   </div>
 </div>
 
@@ -122,7 +127,24 @@ const d90 = new Date(today); d90.setDate(d90.getDate() - 90);
 document.getElementById('end').value = today.toISOString().slice(0,10);
 document.getElementById('start').value = d90.toISOString().slice(0,10);
 
+let lastResultRows = [];
+
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function downloadCSV() {
+  if (!lastResultRows.length) return;
+  const keys = Object.keys(lastResultRows[0]);
+  const header = keys.map(k => '"' + k.replace(/"/g, '""') + '"').join(',');
+  const lines = lastResultRows.map(row =>
+    keys.map(k => { const v = String(row[k] ?? ''); return '"' + v.replace(/"/g, '""') + '"'; }).join(',')
+  );
+  const csv = header + '\\n' + lines.join('\\n');
+  const blob = new Blob([csv], {type: 'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'dataprime-results.csv';
+  a.click();
+}
 
 function runQuery() {
   const btn = document.getElementById('run');
@@ -153,25 +175,29 @@ function runQuery() {
 
   evtSource.addEventListener('result', e => {
     const data = JSON.parse(e.data);
+    lastResultRows = data.rows;
     resultbox.className = 'result-box visible';
     document.getElementById('result-title').textContent =
       'Results (' + data.rows.length + ' rows, type=' + data.type + ', ' + data.elapsed + ')';
     if (data.rows.length === 0) {
       document.getElementById('result-table').innerHTML = '<p class="dim">No data returned.</p>';
+      document.getElementById('csv-btn').className = 'btn-csv';
     } else {
       let html = '<table><tr>';
       Object.keys(data.rows[0]).forEach(k => html += '<th>' + esc(k) + '</th>');
       html += '</tr>';
+      const aggFields = new Set(data.agg_fields || []);
       data.rows.forEach(row => {
         html += '<tr>';
         Object.keys(data.rows[0]).forEach(k => {
           const v = row[k]; const num = parseFloat(v);
-          html += '<td>' + (isNaN(num) ? esc(String(v)) : num.toLocaleString()) + '</td>';
+          html += '<td>' + (aggFields.has(k) && !isNaN(num) ? num.toLocaleString() : esc(String(v))) + '</td>';
         });
         html += '</tr>';
       });
       html += '</table>';
       document.getElementById('result-table').innerHTML = html;
+      document.getElementById('csv-btn').className = 'btn-csv visible';
     }
   });
 
@@ -302,7 +328,7 @@ def run():
                             yield from send_log(f'<span class="warn">&#9888; SCAN LIMIT {label} &mdash; splitting to {half}d</span>')
                             next_pending.extend(generate_chunks(cs, ce, half))
                     elif result["error"]:
-                        yield from send_log(f'<span class="err">&#10007; {label} &mdash; {str(result["error"])[:120]}</span>')
+                        yield from send_log(f'<span class="err">&#10007; {label} &mdash; {str(result["error"])[:500]}</span>')
                         failed.append(label)
                     else:
                         rows = result["rows"]
@@ -320,11 +346,12 @@ def run():
             yield from send_log(f'\n<span class="warn">&#9888; {len(failed)} window(s) failed</span>')
 
         rt = result_type or detect_result_type(all_rows)
-        final = merge_results(all_rows, rt) if all_rows else []
+        agg_fields = extract_aggregate_fields(q)
+        final = merge_results(all_rows, rt, aggregate_fields=agg_fields or None) if all_rows else []
 
         yield from send_log(f'\n<span class="dim">Done in {wall_elapsed}</span>')
 
-        payload = json.dumps({"rows": final, "type": rt, "elapsed": wall_elapsed, "failed": len(failed)})
+        payload = json.dumps({"rows": final, "type": rt, "elapsed": wall_elapsed, "failed": len(failed), "agg_fields": list(agg_fields)})
         yield f"event: result\ndata: {payload}\n\n"
         yield "event: done\ndata: ok\n\n"
 
